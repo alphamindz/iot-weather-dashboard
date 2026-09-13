@@ -1,0 +1,21 @@
+{
+  "rules": {
+    "sensorData": {
+      ".read": true,
+      ".write": "auth != null"
+    },
+    "history": {
+      ".read": true,
+      ".write": "auth != null",
+      ".indexOn": ["timestamp"]
+    },
+    "status": {
+      ".read": true,
+      ".write": "auth != null"
+    },
+    "alerts": {
+      ".read": "auth != null",
+      ".write": false
+    }
+  }
+}
