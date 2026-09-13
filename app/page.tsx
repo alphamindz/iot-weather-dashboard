@@ -12,7 +12,7 @@ export default function Home() {
   const { current, history, status, loading, error } = useSensorData();
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-4 px-5 py-10 sm:py-14">
+    <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-4 px-5 py-10 sm:py-14">
       <header>
         <h1 className="font-display text-xl font-semibold text-mist-200">Weather Monitor ESP32</h1>
         <p className="text-sm text-mist-500">Live readings from Supabase.</p>

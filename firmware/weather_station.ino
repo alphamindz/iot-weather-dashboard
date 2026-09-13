@@ -1,41 +1,26 @@
 /*
-  ESP32 Weather Station -> Firebase Realtime Database
+  ESP32 Weather Station -> Supabase (PostgreSQL REST API)
   ----------------------------------------------------
-  Starting-point firmware matching the dashboard's expected DB shape:
-    /sensorData              latest reading (overwritten each push)
-    /status/esp32/online     true while connected, auto-flips false via onDisconnect()
-    /status/esp32/lastSeen   epoch ms of the last write
-    /history/<pushId>        one entry every PUSH_HISTORY_EVERY_MS, feeds the trend chart
+  Dashboard ke expected tables:
+    readings table        -> har reading ek naya row (insert)
+    device_status table   -> ek row per device (update), online/last_seen
 
-  Library: Firebase ESP32 Client (mobizt) — install "Firebase ESP Client" from
-  the Arduino Library Manager. Swap the placeholder sensor reads below for
-  your actual sensors (e.g. DHT22 for temp/humidity, a rain gauge/tipping
-  bucket on an interrupt pin, an anemometer, a GUVA-S12SD for UV).
+  Koi extra library ki zaroorat nahi — HTTPClient built-in hai ESP32 core mein.
+  Bas apna WiFi + Supabase URL/API key neeche fill karein.
 */
 
 #include <WiFi.h>
-#include <Firebase_ESP_Client.h>
-#include <addons/TokenHelper.h>
+#include <HTTPClient.h>
 
 #define WIFI_SSID "YOUR_WIFI_SSID"
 #define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
 
-#define API_KEY "YOUR_FIREBASE_WEB_API_KEY"
-#define DATABASE_URL "https://YOUR_PROJECT-default-rtdb.firebaseio.com/"
+// Supabase dashboard -> Settings -> API se milega
+#define SUPABASE_URL "https://YOUR_PROJECT.supabase.co"
+#define SUPABASE_ANON_KEY "YOUR_SUPABASE_ANON_KEY"
 
-// Create this as a dedicated Firebase Auth user (Console > Authentication >
-// Email/Password) just for the device — do not reuse a personal account.
-#define DEVICE_EMAIL "esp32-device@yourproject.local"
-#define DEVICE_PASSWORD "a-long-random-password"
-
-FirebaseData fbdo;
-FirebaseAuth auth;
-FirebaseConfig config;
-
-const unsigned long PUSH_READING_EVERY_MS = 5000;   // /sensorData refresh rate
-const unsigned long PUSH_HISTORY_EVERY_MS = 1800000; // 30 min -> 48 points/day
+const unsigned long PUSH_READING_EVERY_MS = 5000;   // har 5 sec naya reading
 unsigned long lastReadingPush = 0;
-unsigned long lastHistoryPush = 0;
 
 struct Reading {
   float temperature;
@@ -47,7 +32,7 @@ struct Reading {
 
 Reading readSensors() {
   Reading r;
-  // TODO: replace with real sensor reads
+  // TODO: yahan real sensor reads daalein
   r.temperature = 28.5;
   r.humidity = 62.0;
   r.windSpeed = 12.0;
@@ -67,62 +52,78 @@ void setup() {
   }
   Serial.println("\nConnected: " + WiFi.localIP().toString());
 
-  config.api_key = API_KEY;
-  config.database_url = DATABASE_URL;
-  auth.user.email = DEVICE_EMAIL;
-  auth.user.password = DEVICE_PASSWORD;
-  config.token_status_callback = tokenStatusCallback;
-
-  Firebase.begin(&config, &auth);
-  Firebase.reconnectWiFi(true);
-
-  // Flip /status/esp32/online to false automatically if the device drops
-  // off the network, without needing the device itself to detect the drop.
-  FirebaseJson offlineStatus;
-  offlineStatus.set("online", false);
-  offlineStatus.set("lastSeen", (double)0); // client SDKs would use ServerValue.TIMESTAMP; REST clients use current millis
-  Firebase.RTDB.setPriority(&fbdo, "/status/esp32", 1); // ensure node exists before onDisconnect
-  Firebase.RTDB.setBool(&fbdo, "/status/esp32/online", true);
+  // Device ko "online" mark karein
+  updateDeviceStatus(true);
 }
 
 void loop() {
-  if (!Firebase.ready()) return;
   unsigned long now = millis();
 
   if (now - lastReadingPush >= PUSH_READING_EVERY_MS) {
     lastReadingPush = now;
-    Reading r = readSensors();
+    pushReading();
+    updateDeviceStatus(true);
+  }
+}
 
-    FirebaseJson json;
-    json.set("temperature", r.temperature);
-    json.set("humidity", r.humidity);
-    json.set("windSpeed", r.windSpeed);
-    json.set("uvIndex", r.uvIndex);
-    json.set("rainfall", r.rainfall);
-    json.set("timestamp", (double)(now)); // consider NTP for wall-clock accuracy
+void pushReading() {
+  if (WiFi.status() != WL_CONNECTED) return;
 
-    if (Firebase.RTDB.setJSON(&fbdo, "/sensorData", &json)) {
-      Serial.println("Pushed sensorData");
-    } else {
-      Serial.println("Push failed: " + fbdo.errorReason());
-    }
+  Reading r = readSensors();
+  HTTPClient http;
 
-    Firebase.RTDB.setBool(&fbdo, "/status/esp32/online", true);
-    Firebase.RTDB.setInt(&fbdo, "/status/esp32/lastSeen", now);
+  String url = String(SUPABASE_URL) + "/rest/v1/readings";
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("apikey", SUPABASE_ANON_KEY);
+  http.addHeader("Authorization", "Bearer " + String(SUPABASE_ANON_KEY));
+  http.addHeader("Prefer", "return=minimal");
+
+  String payload = "{";
+  payload += "\"temperature\":" + String(r.temperature) + ",";
+  payload += "\"humidity\":" + String(r.humidity) + ",";
+  payload += "\"windSpeed\":" + String(r.windSpeed) + ",";
+  payload += "\"uvIndex\":" + String(r.uvIndex) + ",";
+  payload += "\"rainfall\":" + String(r.rainfall) + ",";
+  payload += "\"timestamp\":" + String((unsigned long long)millis());
+  payload += "}";
+
+  int httpCode = http.POST(payload);
+
+  if (httpCode > 0 && httpCode < 300) {
+    Serial.println("Pushed reading OK");
+  } else {
+    Serial.println("Push failed: " + String(httpCode) + " " + http.getString());
   }
 
-  if (now - lastHistoryPush >= PUSH_HISTORY_EVERY_MS) {
-    lastHistoryPush = now;
-    Reading r = readSensors();
+  http.end();
+}
 
-    FirebaseJson json;
-    json.set("temperature", r.temperature);
-    json.set("humidity", r.humidity);
-    json.set("windSpeed", r.windSpeed);
-    json.set("uvIndex", r.uvIndex);
-    json.set("rainfall", r.rainfall);
-    json.set("timestamp", (double)(now));
+void updateDeviceStatus(bool online) {
+  if (WiFi.status() != WL_CONNECTED) return;
 
-    Firebase.RTDB.pushJSON(&fbdo, "/history", &json);
+  HTTPClient http;
+  // upsert: agar device_id already hai to update, warna insert
+  String url = String(SUPABASE_URL) + "/rest/v1/device_status?on_conflict=device_id";
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("apikey", SUPABASE_ANON_KEY);
+  http.addHeader("Authorization", "Bearer " + String(SUPABASE_ANON_KEY));
+  http.addHeader("Prefer", "resolution=merge-duplicates,return=minimal");
+
+  String payload = "{";
+  payload += "\"device_id\":\"esp32\",";
+  payload += "\"online\":" + String(online ? "true" : "false") + ",";
+  payload += "\"last_seen\":" + String((unsigned long long)millis());
+  payload += "}";
+
+  int httpCode = http.POST(payload);
+
+  if (httpCode > 0 && httpCode < 300) {
+    Serial.println("Status updated OK");
+  } else {
+    Serial.println("Status update failed: " + String(httpCode) + " " + http.getString());
   }
+
+  http.end();
 }
