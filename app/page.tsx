@@ -1,15 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import ConnectionError from "@/components/ConnectionError";
-import GaugeCard from "@/components/GaugeCard";
-import LoadingSkeleton from "@/components/LoadingSkeleton";
-import StatCard from "@/components/StatCard";
-import StatusBanner from "@/components/StatusBanner";
-import TrendChart from "@/components/TrendChart";
-import WeatherBackdrop from "@/components/WeatherBackdrop";
-import { useSensorData } from "@/lib/useSensorData";
-import { calculateHeatIndex, calculateDewPoint, calculateMinMaxAvg } from "@/lib/weatherMath";
+import ConnectionError from "../components/ConnectionError";
+import GaugeCard from "../components/GaugeCard";
+import LoadingSkeleton from "../components/LoadingSkeleton";
+import StatCard from "../components/StatCard";
+import StatusBanner from "../components/StatusBanner";
+import TrendChart from "../components/TrendChart";
+import WeatherBackdrop from "../components/WeatherBackdrop";
+import { useSensorData } from "../lib/useSensorData";
+import { calculateHeatIndex, calculateDewPoint, calculateMinMaxAvg } from "../lib/weatherMath";
 
 export default function Home() {
   const { current, history, status, loading, error } = useSensorData();
